@@ -26,12 +26,12 @@ final class EventController {
     private let overlayManager = OverlayManager()
     private var preferences = LayoutPreferences()
     private var generation = 0
-    private var isDraggingWithModifier = false
+    private var hasDragged = false
+    private var windowHasMoved = false
     private var dragStartLocation: CGPoint?
     private var initialWindowFrame: CGRect?
     private var lastOverlayUpdateTime: TimeInterval = 0
     private var candidateWindow: AXUIElement?
-    private var targetWindow: AXUIElement?
 
     func configure(_ preferences: LayoutPreferences) {
         generation += 1
@@ -147,17 +147,17 @@ final class EventController {
     private func handleOnMainThread(type: CGEventType, modifierPressed: Bool, location: CGPoint) {
         switch type {
         case .leftMouseDown:
-            prepareLayoutDrag(modifierPressed: modifierPressed, location: location)
+            prepareLayoutDrag(location: location)
 
         case .leftMouseDragged:
             handleDragged(modifierPressed: modifierPressed, location: location)
 
         case .leftMouseUp:
-            if modifierPressed { handleMouseUp() } else { forceResetOverlayState() }
+            handleMouseUp(modifierPressed: modifierPressed, location: location)
 
         case .flagsChanged:
-            if !modifierPressed {
-                forceResetOverlayState()
+            if hasDragged {
+                updateOverlay(modifierPressed: modifierPressed, location: location)
             }
 
         case .keyDown:
@@ -174,32 +174,9 @@ final class EventController {
     }
 
     private func handleDragged(modifierPressed: Bool, location: CGPoint) {
-        guard modifierPressed, candidateWindow != nil else {
-            forceResetOverlayState()
-            return
-        }
-
-        if dragStartLocation == nil {
-            dragStartLocation = location
-            return
-        }
-
-        if !isDraggingWithModifier, let dragStartLocation {
-            let dx = location.x - dragStartLocation.x
-            let dy = location.y - dragStartLocation.y
-            let distance = CGFloat(hypot(Double(dx), Double(dy)))
-            guard distance >= CGFloat(preferences.activationDistance) else {
-                return
-            }
-            if preferences.requireWindowMovement {
-                guard let window = candidateWindow,
-                      let initialWindowFrame,
-                      let frame = WindowManager.frame(of: window),
-                      hypot(frame.minX - initialWindowFrame.minX, frame.minY - initialWindowFrame.minY) >= 2 else {
-                    return
-                }
-            }
-        }
+        guard candidateWindow != nil else { return }
+        hasDragged = true
+        recordWindowMovement()
 
         let now = CACurrentMediaTime()
         if now - lastOverlayUpdateTime < 0.03 {
@@ -207,21 +184,14 @@ final class EventController {
         }
         lastOverlayUpdateTime = now
 
-        if !isDraggingWithModifier {
-            targetWindow = candidateWindow
-            isDraggingWithModifier = true
-        }
-
-        let mouseLocation = NSEvent.mouseLocation
-        overlayManager.showIfNeeded(at: mouseLocation)
-        overlayManager.updateHighlight(at: mouseLocation)
+        updateOverlay(modifierPressed: modifierPressed, location: location)
     }
 
-    private func handleMouseUp() {
-        let shouldApply = isDraggingWithModifier || overlayManager.isVisible
-        let mouseLocation = NSEvent.mouseLocation
-        let selectedZone = shouldApply ? overlayManager.zone(at: mouseLocation) : nil
-        let selectedWindow = targetWindow
+    private func handleMouseUp(modifierPressed: Bool, location: CGPoint) {
+        recordWindowMovement()
+        let selectedZone = hasDragged ? overlayManager.zone(at: appKitLocation(location),
+            modifierPressed: modifierPressed, windowMoved: windowHasMoved, dragDistance: dragDistance(location)) : nil
+        let selectedWindow = candidateWindow
 
         forceResetOverlayState()
 
@@ -236,11 +206,10 @@ final class EventController {
         }
     }
 
-    private func prepareLayoutDrag(modifierPressed: Bool, location: CGPoint) {
+    private func prepareLayoutDrag(location: CGPoint) {
         forceResetOverlayState()
 
-        guard modifierPressed,
-              !preferences.enabledZones.isEmpty,
+        guard preferences.enabled, !preferences.enabledZones.isEmpty,
               let window = WindowManager.window(at: location),
               let frame = WindowManager.frame(of: window),
               frame.contains(location),
@@ -253,14 +222,36 @@ final class EventController {
         initialWindowFrame = frame
     }
 
+    private func recordWindowMovement() {
+        guard !windowHasMoved, let window = candidateWindow, let initialWindowFrame,
+              let frame = WindowManager.frame(of: window),
+              abs(frame.width - initialWindowFrame.width) < 2,
+              abs(frame.height - initialWindowFrame.height) < 2 else { return }
+        windowHasMoved = hypot(frame.minX - initialWindowFrame.minX, frame.minY - initialWindowFrame.minY) >= 2
+    }
+
+    private func dragDistance(_ location: CGPoint) -> CGFloat {
+        guard let start = dragStartLocation else { return 0 }
+        return hypot(location.x - start.x, location.y - start.y)
+    }
+
+    private func appKitLocation(_ location: CGPoint) -> CGPoint {
+        CGPoint(x: location.x, y: (NSScreen.screens.first?.frame.maxY ?? 0) - location.y)
+    }
+
+    private func updateOverlay(modifierPressed: Bool, location: CGPoint) {
+        overlayManager.update(at: appKitLocation(location), modifierPressed: modifierPressed,
+                              windowMoved: windowHasMoved, dragDistance: dragDistance(location))
+    }
+
     private func forceResetOverlayState() {
         overlayManager.hide()
-        isDraggingWithModifier = false
+        hasDragged = false
+        windowHasMoved = false
         dragStartLocation = nil
         initialWindowFrame = nil
         lastOverlayUpdateTime = 0
         candidateWindow = nil
-        targetWindow = nil
     }
 
     private func isLayoutModifierPressed(_ flags: CGEventFlags) -> Bool {

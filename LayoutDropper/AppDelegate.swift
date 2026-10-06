@@ -128,7 +128,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                             accessibilityDescription: "LayoutDropper")
         image?.isTemplate = true
         statusItem.button?.image = image
-        statusItem.button?.toolTip = "LayoutDropper · \(title) · \(store.preferences.modifier.title)"
+        statusItem.button?.toolTip = "LayoutDropper · \(title) · 边缘分屏 · \(store.preferences.modifier.title) 调试"
         settingsWindow?.refreshStatus(eventController.state)
     }
 

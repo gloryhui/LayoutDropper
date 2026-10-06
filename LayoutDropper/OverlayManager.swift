@@ -4,86 +4,57 @@ final class OverlayManager {
     var preferences = LayoutPreferences() {
         didSet { hide() }
     }
-    private var windows: [OverlayWindow] = []
+    private var debugWindow: OverlayWindow?
     private var previewWindow: OverlayWindow?
     private var highlightedKind: LayoutZone.Kind?
-    private var zones: [LayoutZone] = []
     private var currentScreen: NSScreen?
 
     var isVisible: Bool {
-        !windows.isEmpty
+        debugWindow != nil || previewWindow != nil
     }
 
-    func showIfNeeded(at point: CGPoint) {
-        guard let screen = screen(containing: point) else { return }
-        if currentScreen == screen, isVisible { return }
-
+    func update(at point: CGPoint, modifierPressed: Bool, windowMoved: Bool, dragDistance: CGFloat) {
+        guard preferences.enabled, let screen = screen(containing: point) else { hide(); return }
+        let selected = zone(at: point, modifierPressed: modifierPressed,
+                            windowMoved: windowMoved, dragDistance: dragDistance)
+        let debugActive = selected?.kind == .debug1080 ||
+            (selected == nil && modifierPressed && (windowMoved || !preferences.requireWindowMovement) &&
+             dragDistance >= CGFloat(preferences.activationDistance) && preferences.enabledZones.contains(.debug1080))
+        if currentScreen == screen, highlightedKind == selected?.kind, (debugWindow != nil) == debugActive { return }
         hide()
         currentScreen = screen
-        zones = LayoutZone.zones(for: screen, preferences: preferences)
-        windows = zones.map { zone in
-            let window = OverlayWindow(zone: zone, isTrigger: zone.kind != .debug1080,
-                                       opacity: CGFloat(preferences.previewOpacity))
+        highlightedKind = selected?.kind
+        if debugActive, let zone = LayoutZone.zones(for: screen, preferences: preferences).first(where: { $0.kind == .debug1080 }) {
+            let window = OverlayWindow(zone: zone, opacity: CGFloat(preferences.previewOpacity))
+            window.setHighlighted(selected?.kind == .debug1080)
             window.orderFrontRegardless()
-            return window
-        }
-        // 保证小触发块位于 1080P 遮罩之上。
-        for window in windows where window.zone.kind != .debug1080 {
+            debugWindow = window
+        } else if let selected {
+            let window = OverlayWindow(zone: selected, opacity: CGFloat(preferences.previewOpacity))
+            window.setHighlighted(true)
             window.orderFrontRegardless()
+            previewWindow = window
         }
     }
 
-    func updateHighlight(at point: CGPoint) {
-        let selectedZone = zone(at: point)
-        guard highlightedKind != selectedZone?.kind else { return }
-        highlightedKind = selectedZone?.kind
-
-        previewWindow?.orderOut(nil)
-        previewWindow = nil
-        for window in windows {
-            window.setHighlighted(window.zone.kind == highlightedKind)
-            if window.zone.kind == .debug1080 {
-                if selectedZone == nil || highlightedKind == .debug1080 {
-                    window.orderFrontRegardless()
-                } else {
-                    window.orderOut(nil)
-                }
-            }
-        }
-
-        if let selectedZone, selectedZone.kind != .debug1080 {
-            let preview = OverlayWindow(zone: selectedZone, opacity: CGFloat(preferences.previewOpacity))
-            preview.setHighlighted(true)
-            preview.orderFrontRegardless()
-            previewWindow = preview
-        }
-
-        for window in windows where window.zone.kind != .debug1080 {
-            window.orderFrontRegardless()
-        }
-    }
-
-    func zone(at point: CGPoint) -> LayoutZone? {
+    func zone(at point: CGPoint, modifierPressed: Bool, windowMoved: Bool, dragDistance: CGFloat) -> LayoutZone? {
         guard let screen = screen(containing: point) else { return nil }
-        let screenZones = currentScreen == screen ? zones : LayoutZone.zones(for: screen, preferences: preferences)
-        return screenZones.first { $0.triggerFrame.contains(point) }
+        return LayoutZone.selectedZone(at: point, screenFrame: screen.frame, visibleFrame: screen.visibleFrame,
+                                       modifierPressed: modifierPressed, windowMoved: windowMoved,
+                                       dragDistance: dragDistance, preferences: preferences)
     }
 
     func hide() {
         previewWindow?.orderOut(nil)
         previewWindow = nil
         highlightedKind = nil
-        for window in windows {
-            window.orderOut(nil)
-        }
-        windows.removeAll()
-        zones.removeAll()
+        debugWindow?.orderOut(nil)
+        debugWindow = nil
         currentScreen = nil
     }
 
     private func screen(containing point: CGPoint) -> NSScreen? {
-        NSScreen.screens.first { screen in
-            screen.frame.contains(point)
-        }
+        NSScreen.screens.first { $0.frame.contains(point) } ??
+            NSScreen.screens.first { LayoutZone.contains(point, in: $0.frame) }
     }
 }

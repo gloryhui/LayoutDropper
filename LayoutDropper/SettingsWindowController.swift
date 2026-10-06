@@ -7,9 +7,10 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
     var onRestartMonitoring: (() -> Void)?
     private let store: SettingsStore
     private var observer: NSObjectProtocol?
+    private var screenObserver: NSObjectProtocol?
     private let enabled = NSButton(checkboxWithTitle: "启用窗口布局", target: nil, action: nil)
     private let login = NSButton(checkboxWithTitle: "登录时启动", target: nil, action: nil)
-    private let movement = NSButton(checkboxWithTitle: "仅在窗口实际移动时触发", target: nil, action: nil)
+    private let movement = NSButton(checkboxWithTitle: "调试遮罩仅在窗口实际移动时触发", target: nil, action: nil)
     private let modifier = NSPopUpButton(frame: .zero, pullsDown: false)
     private var sliders: [String: NSSlider] = [:]
     private var sliderLabels: [String: NSTextField] = [:]
@@ -25,6 +26,11 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
     private let loginStatus = NSTextField(labelWithString: "")
     private let loginSettings = NSButton(title: "登录项设置…", target: nil, action: nil)
     private let layoutPreview = LayoutSettingsPreview()
+    private let triggerPreview = LayoutSettingsPreview()
+    private let screenInfo = NSTextField(labelWithString: "")
+    private var triggerFields: [LayoutZone.Kind: (width: NSTextField, height: NSTextField,
+                                                widthStepper: NSStepper, heightStepper: NSStepper)] = [:]
+    private var dimensionBindings: [Int: (kind: LayoutZone.Kind, isWidth: Bool)] = [:]
     private(set) var tabs = NSTabView()
 
     init(store: SettingsStore) {
@@ -45,12 +51,18 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
                                                            queue: .main) { [weak self] _ in
             self?.reloadControls()
         }
+        screenObserver = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
+                                                                 object: nil, queue: .main) { [weak self] _ in
+            self?.refreshScreenPreview()
+        }
+        refreshScreenPreview()
     }
 
     required init?(coder: NSCoder) { nil }
 
     deinit {
         if let observer { NotificationCenter.default.removeObserver(observer) }
+        if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
     }
 
     override func showWindow(_ sender: Any?) {
@@ -59,10 +71,31 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         super.showWindow(sender)
         window?.makeKeyAndOrderFront(sender)
         NSApp.activate(ignoringOtherApps: true)
+        refreshScreenPreview()
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         sender.makeFirstResponder(nil)
+    }
+
+    func windowDidChangeScreen(_ notification: Notification) {
+        refreshScreenPreview()
+    }
+
+    private func refreshScreenPreview() {
+        if let screen = window?.screen ?? NSScreen.main ?? NSScreen.screens.first {
+            let points = "\(Int(screen.frame.width))×\(Int(screen.frame.height)) pt"
+            var dimensions = points
+            if let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber,
+               let mode = CGDisplayCopyDisplayMode(number.uint32Value) {
+                dimensions += " · \(mode.pixelWidth)×\(mode.pixelHeight) px"
+            }
+            screenInfo.stringValue = "\(screen.localizedName) · \(dimensions)"
+        } else {
+            screenInfo.stringValue = "屏幕不可用"
+        }
+        layoutPreview.needsDisplay = true
+        triggerPreview.needsDisplay = true
     }
 
     func refreshStatus(_ state: EventController.State) {
@@ -84,10 +117,14 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         icon.imageScaling = .scaleProportionallyUpOrDown
         let title = NSTextField(labelWithString: "LayoutDropper")
         title.font = .systemFont(ofSize: 21, weight: .semibold)
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.1"
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.4"
         let subtitle = NSTextField(labelWithString: "窗口布局 · \(version)")
         subtitle.textColor = .secondaryLabelColor
-        let identity = NSStackView(views: [title, subtitle])
+        screenInfo.identifier = NSUserInterfaceItemIdentifier("layout.screenInfo")
+        screenInfo.font = .systemFont(ofSize: 12)
+        screenInfo.textColor = .secondaryLabelColor
+        screenInfo.lineBreakMode = .byTruncatingMiddle
+        let identity = NSStackView(views: [title, subtitle, screenInfo])
         identity.orientation = .vertical
         identity.alignment = .leading
         identity.spacing = 4
@@ -101,6 +138,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         tabs.font = .systemFont(ofSize: 13)
         addTab("通用", id: "general", content: generalPage())
         addTab("布局", id: "layouts", content: layoutsPage())
+        addTab("触发区域", id: "triggers", content: triggersPage())
         addTab("权限", id: "permissions", content: permissionsPage())
 
         let reset = NSButton(image: NSImage(systemSymbolName: "arrow.counterclockwise", accessibilityDescription: "恢复默认设置")!,
@@ -120,6 +158,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
             root.widthAnchor.constraint(equalToConstant: 720),
             root.heightAnchor.constraint(equalToConstant: 640),
             header.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 24),
+            header.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -24),
             header.topAnchor.constraint(equalTo: root.topAnchor, constant: 20),
             tabs.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
             tabs.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -20),
@@ -150,10 +189,9 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         modifier.action = #selector(changeModifier)
         modifier.widthAnchor.constraint(equalToConstant: 220).isActive = true
         let grid = NSGridView(views: [
-            [label("触发组合键"), modifier],
+            [label("调试触发键"), modifier],
             [label("拖动距离"), sliderRow("distance", range: 4...200)],
             [label("窗口顶部范围"), sliderRow("titleHeight", range: 24...160)],
-            [label("边角触发块大小"), sliderRow("triggerSize", range: 32...180)],
             [label("遮罩透明度"), sliderRow("opacity", range: 5...45)]
         ])
         grid.column(at: 0).width = 125
@@ -166,6 +204,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
     }
 
     private func layoutsPage() -> NSStackView {
+        layoutPreview.identifier = NSUserInterfaceItemIdentifier("layout.preview")
         layoutPreview.heightAnchor.constraint(equalToConstant: 190).isActive = true
         let kinds = LayoutZone.Kind.allCases
         for kind in kinds {
@@ -202,6 +241,47 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         return pageStack([grid, separator(), settings])
     }
 
+    private func triggersPage() -> NSStackView {
+        triggerPreview.identifier = NSUserInterfaceItemIdentifier("layout.triggerPreview")
+        triggerPreview.showsDebugZone = false
+        triggerPreview.heightAnchor.constraint(equalToConstant: 128).isActive = true
+        var rows: [[NSView]] = [[label("触发位置"), label("宽度 (pt)"), label("高度 (pt)")]]
+        for (index, kind) in LayoutZone.Kind.allCases.filter({ $0 != .debug1080 }).enumerated() {
+            let width = NSTextField()
+            let height = NSTextField()
+            let widthStepper = NSStepper()
+            let heightStepper = NSStepper()
+            let widthTag = 2 + index * 2
+            let heightTag = widthTag + 1
+            dimensionBindings[widthTag] = (kind, true)
+            dimensionBindings[heightTag] = (kind, false)
+            configureDimension(width, stepper: widthStepper, id: "layout.trigger.\(kind.rawValue).width",
+                               range: 4...7680, tag: widthTag)
+            configureDimension(height, stepper: heightStepper, id: "layout.trigger.\(kind.rawValue).height",
+                               range: 4...4320, tag: heightTag)
+            width.setAccessibilityLabel("\(kind.title)触发宽度")
+            height.setAccessibilityLabel("\(kind.title)触发高度")
+            widthStepper.increment = 4
+            heightStepper.increment = 4
+            triggerFields[kind] = (width, height, widthStepper, heightStepper)
+            let widthRow = NSStackView(views: [width, widthStepper])
+            let heightRow = NSStackView(views: [height, heightStepper])
+            widthRow.spacing = 8
+            heightRow.spacing = 8
+            rows.append([label(kind.title), widthRow, heightRow])
+        }
+        let grid = NSGridView(views: rows)
+        grid.column(at: 0).width = 180
+        grid.column(at: 1).width = 130
+        grid.column(at: 2).width = 130
+        grid.columnSpacing = 22
+        grid.rowSpacing = 10
+        grid.widthAnchor.constraint(equalToConstant: 484).isActive = true
+        let stack = pageStack([triggerPreview, grid])
+        triggerPreview.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        return stack
+    }
+
     private func addTab(_ title: String, id: String, content: NSStackView) {
         let scroll = NSScrollView()
         scroll.autoresizingMask = [.width, .height]
@@ -235,7 +315,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         slider.isContinuous = true
         slider.identifier = NSUserInterfaceItemIdentifier("layout.\(id)")
         slider.setAccessibilityLabel(["distance": "拖动距离", "titleHeight": "窗口顶部范围",
-                                      "triggerSize": "边角触发块大小", "opacity": "遮罩透明度"][id])
+                                      "opacity": "遮罩透明度"][id])
         let value = NSTextField(labelWithString: "")
         value.alignment = .right
         value.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
@@ -268,6 +348,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         stepper.maxValue = Double(range.upperBound)
         stepper.increment = 10
         stepper.tag = tag
+        stepper.identifier = NSUserInterfaceItemIdentifier("\(id).stepper")
         stepper.target = self
         stepper.action = #selector(changeDimensionStepper(_:))
     }
@@ -278,7 +359,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         movement.state = p.requireWindowMovement ? .on : .off
         modifier.selectItem(at: LayoutModifier.allCases.firstIndex(of: p.modifier)!)
         let values: [String: Double] = ["distance": Double(p.activationDistance), "titleHeight": Double(p.titleBarHeight),
-                                       "triggerSize": Double(p.triggerSize), "opacity": p.previewOpacity * 100]
+                                       "opacity": p.previewOpacity * 100]
         for (id, value) in values {
             sliders[id]?.doubleValue = value
             sliderLabels[id]?.stringValue = "\(Int(value.rounded())) \(id == "opacity" ? "%" : "pt")"
@@ -292,7 +373,20 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         heightField.isEnabled = widthField.isEnabled
         widthStepper.isEnabled = widthField.isEnabled
         heightStepper.isEnabled = widthField.isEnabled
+        for (kind, fields) in triggerFields {
+            let size = p.triggerDimensions(for: kind)
+            fields.width.integerValue = size.width
+            fields.height.integerValue = size.height
+            fields.widthStepper.integerValue = size.width
+            fields.heightStepper.integerValue = size.height
+            let active = p.enabledZones.contains(kind)
+            fields.width.isEnabled = active
+            fields.height.isEnabled = active
+            fields.widthStepper.isEnabled = active
+            fields.heightStepper.isEnabled = active
+        }
         layoutPreview.preferences = p
+        triggerPreview.preferences = p
     }
 
     private func refreshLoginStatus() {
@@ -346,7 +440,6 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
             switch sender.identifier?.rawValue {
             case "layout.distance": $0.activationDistance = Int(sender.doubleValue.rounded())
             case "layout.titleHeight": $0.titleBarHeight = Int(sender.doubleValue.rounded())
-            case "layout.triggerSize": $0.triggerSize = Int(sender.doubleValue.rounded())
             case "layout.opacity": $0.previewOpacity = sender.doubleValue.rounded() / 100
             default: break
             }
@@ -363,14 +456,21 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
             reloadControls()
             return
         }
-        store.update {
-            if field.tag == 0 { $0.debugWidth = value } else { $0.debugHeight = value }
-        }
+        updateDimension(value, tag: field.tag)
         reloadControls()
     }
     @objc private func changeDimensionStepper(_ sender: NSStepper) {
+        updateDimension(sender.integerValue, tag: sender.tag)
+    }
+    private func updateDimension(_ value: Int, tag: Int) {
         store.update {
-            if sender.tag == 0 { $0.debugWidth = sender.integerValue } else { $0.debugHeight = sender.integerValue }
+            if tag == 0 { $0.debugWidth = value }
+            else if tag == 1 { $0.debugHeight = value }
+            else if let binding = dimensionBindings[tag] {
+                var size = $0.triggerDimensions(for: binding.kind)
+                if binding.isWidth { size.width = value } else { size.height = value }
+                $0.setTriggerDimensions(size, for: binding.kind)
+            }
         }
     }
     @objc private func toggleLogin() {
@@ -414,25 +514,40 @@ private final class SettingsDocumentView: NSView {
 
 final class LayoutSettingsPreview: NSView {
     var preferences = LayoutPreferences() { didSet { needsDisplay = true } }
+    var showsDebugZone = true
+
+    var previewScreen: NSScreen? { window?.screen ?? NSScreen.main ?? NSScreen.screens.first }
+
+    func previewZones() -> [LayoutZone] {
+        guard let screen = previewScreen else { return [] }
+        return LayoutZone.zones(for: screen, preferences: preferences)
+    }
+
+    static func fittedFrame(_ rect: CGRect, screenFrame: CGRect, in bounds: CGRect) -> CGRect? {
+        guard screenFrame.width > 0, screenFrame.height > 0, bounds.width > 16, bounds.height > 16 else { return nil }
+        let scale = min((bounds.width - 16) / screenFrame.width, (bounds.height - 16) / screenFrame.height)
+        let origin = CGPoint(x: bounds.midX - screenFrame.width * scale / 2,
+                             y: bounds.midY - screenFrame.height * scale / 2)
+        return CGRect(x: origin.x + (rect.minX - screenFrame.minX) * scale,
+                      y: origin.y + (rect.minY - screenFrame.minY) * scale,
+                      width: rect.width * scale, height: rect.height * scale)
+    }
 
     override func draw(_ dirtyRect: NSRect) {
-        let screen = CGRect(x: 0, y: 0, width: 1920, height: 1080)
-        let visible = CGRect(x: 0, y: 48, width: 1920, height: 1008)
-        let scale = min((bounds.width - 16) / screen.width, (bounds.height - 16) / screen.height)
-        let origin = CGPoint(x: bounds.midX - screen.width * scale / 2, y: bounds.midY - screen.height * scale / 2)
-        func mapped(_ rect: CGRect) -> CGRect {
-            CGRect(x: origin.x + rect.minX * scale, y: origin.y + rect.minY * scale,
-                   width: rect.width * scale, height: rect.height * scale)
-        }
-        let outline = NSBezierPath(roundedRect: mapped(screen), xRadius: 6, yRadius: 6)
+        guard let currentScreen = previewScreen else { return }
+        let screen = currentScreen.frame
+        guard let screenRect = Self.fittedFrame(screen, screenFrame: screen, in: bounds) else { return }
+        let outline = NSBezierPath(roundedRect: screenRect, xRadius: 6, yRadius: 6)
         NSColor.controlBackgroundColor.setFill()
         outline.fill()
         NSColor.separatorColor.setStroke()
         outline.stroke()
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = .center
-        for zone in LayoutZone.zones(screenFrame: screen, visibleFrame: visible, preferences: preferences).reversed() {
-            let rect = mapped(zone.triggerFrame).insetBy(dx: 1, dy: 1)
+        for zone in previewZones().reversed() {
+            if !showsDebugZone && zone.kind == .debug1080 { continue }
+            guard let mappedFrame = Self.fittedFrame(zone.triggerFrame, screenFrame: screen, in: bounds) else { continue }
+            let rect = mappedFrame.insetBy(dx: min(1, mappedFrame.width / 4), dy: min(1, mappedFrame.height / 4))
             let color: NSColor = zone.kind == .debug1080 ? .systemBlue : .systemTeal
             color.withAlphaComponent(zone.kind == .debug1080 ? 0.08 : 0.65).setFill()
             let path = NSBezierPath(roundedRect: rect, xRadius: 3, yRadius: 3)
