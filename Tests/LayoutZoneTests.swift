@@ -127,7 +127,53 @@ enum LayoutZoneTests {
         let disabledCorner = CGPoint(x: 1910, y: 1070)
         precondition(!zones.contains { $0.triggerFrame.contains(disabledCorner) })
         checkCustomDimensions()
+        checkEdgeReleaseJitter()
         print("Layout geometry and modifier-free edge/debug trigger checks passed for \(screens.count) screen configurations and custom layouts.")
+    }
+
+    static func checkEdgeReleaseJitter() {
+        let screen = CGRect(x: 0, y: 0, width: 1920, height: 1080)
+        let visible = CGRect(x: 0, y: 48, width: 1920, height: 1008)
+        // Match the reported configuration: wide corner blocks but narrow sides.
+        var preferences = LayoutPreferences()
+        preferences.setTriggerDimensions(LayoutTriggerSize(width: 8, height: 800), for: .leftHalf)
+        preferences.setTriggerDimensions(LayoutTriggerSize(width: 8, height: 800), for: .rightHalf)
+        preferences.setTriggerDimensions(LayoutTriggerSize(width: 1500, height: 8), for: .maximized)
+        preferences.setTriggerDimensions(LayoutTriggerSize(width: 100, height: 100), for: .topLeft)
+        func select(_ point: CGPoint, previous: LayoutZone.Kind? = nil, moved: Bool = true,
+                    modifier: Bool = false, distance: CGFloat = 40) -> LayoutZone? {
+            LayoutZone.selectedZone(at: point, screenFrame: screen, visibleFrame: visible,
+                                    modifierPressed: modifier, windowMoved: moved, dragDistance: distance,
+                                    preferences: preferences, previousKind: previous)
+        }
+        let edge = CGPoint(x: 4, y: 540)
+        let release = CGPoint(x: 14, y: 540)
+        precondition(select(edge)?.kind == .leftHalf)
+        precondition(select(release) == nil, "Initial activation must still use the configured 8pt strip")
+        precondition(select(release, previous: .leftHalf)?.kind == .leftHalf,
+                     "A preview must survive a small mouse-up jitter")
+        precondition(select(CGPoint(x: 21, y: 540), previous: .leftHalf) == nil,
+                     "Clearly leaving the edge must still cancel")
+        precondition(select(CGPoint(x: 1910, y: 540), previous: .rightHalf)?.kind == .rightHalf)
+        precondition(select(CGPoint(x: 960, y: 1068), previous: .maximized)?.kind == .maximized)
+        precondition(select(CGPoint(x: 8, y: 540), previous: .topLeft)?.kind == .leftHalf,
+                     "A new exact hit must override an old preview")
+        precondition(select(CGPoint(x: 500, y: 540), previous: .leftHalf) == nil)
+        precondition(select(CGPoint(x: -1, y: 540), previous: .leftHalf) == nil,
+                     "Do not retain a zone on another screen")
+        precondition(select(release, previous: .leftHalf, moved: false) == nil)
+        precondition(select(release, previous: .leftHalf, distance: 2) == nil)
+        precondition(select(CGPoint(x: 500, y: 540), previous: .debug1080) == nil,
+                     "Releasing the debug modifier must cancel debug")
+        preferences.enabledZones.remove(.leftHalf)
+        precondition(select(release, previous: .leftHalf) == nil,
+                     "Disabled zones cannot be retained")
+
+        // Legacy corners must stay near the edge even though their trigger blocks
+        // extend much farther into the screen.
+        preferences = LayoutPreferences()
+        precondition(select(CGPoint(x: 15, y: 1040), previous: .topLeft)?.kind == .topLeft)
+        precondition(select(CGPoint(x: 30, y: 1040), previous: .topLeft) == nil)
     }
 
     static func checkCustomDimensions() {

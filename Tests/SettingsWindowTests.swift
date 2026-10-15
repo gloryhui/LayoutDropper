@@ -176,11 +176,23 @@ enum SettingsWindowTests {
         let screen = NSScreen.screens.first!
         let manager = OverlayManager()
         let edge = CGPoint(x: screen.frame.minX + 1, y: screen.frame.midY)
+        let releaseJitter = CGPoint(x: screen.frame.minX + 14, y: screen.frame.midY)
         let center = CGPoint(x: screen.visibleFrame.midX, y: screen.visibleFrame.midY)
         manager.update(at: edge, modifierPressed: false, windowMoved: false, dragDistance: 100)
         precondition(!manager.isVisible, "Text selection must not show an edge preview")
         manager.update(at: edge, modifierPressed: false, windowMoved: true, dragDistance: 100)
         precondition(manager.isVisible, "Normal window drag must show an edge preview")
+        precondition(manager.zone(at: releaseJitter, modifierPressed: false, windowMoved: true,
+                                  dragDistance: 100)?.kind == .leftHalf,
+                     "Mouse-up must retain the displayed half-screen preview under small jitter")
+        manager.update(at: releaseJitter, modifierPressed: false, windowMoved: true, dragDistance: 100)
+        precondition(manager.isVisible, "Minor jitter must not flash the preview off")
+        manager.update(at: CGPoint(x: screen.frame.minX + 24, y: screen.frame.midY),
+                       modifierPressed: false, windowMoved: true, dragDistance: 100)
+        precondition(!manager.isVisible)
+        precondition(manager.zone(at: releaseJitter, modifierPressed: false, windowMoved: true,
+                                  dragDistance: 100) == nil, "Leaving clears the retained preview")
+        manager.update(at: edge, modifierPressed: false, windowMoved: true, dragDistance: 100)
         manager.update(at: edge, modifierPressed: true, windowMoved: true, dragDistance: 100)
         manager.update(at: edge, modifierPressed: false, windowMoved: true, dragDistance: 100)
         precondition(manager.isVisible, "Releasing Shift must not cancel edge snapping")
@@ -195,6 +207,8 @@ enum SettingsWindowTests {
         manager.update(at: edge, modifierPressed: false, windowMoved: true, dragDistance: 100)
         manager.hide()
         precondition(!manager.isVisible)
+        precondition(manager.zone(at: releaseJitter, modifierPressed: false, windowMoved: true,
+                                  dragDistance: 100) == nil, "A cancelled drag must not retain its old zone")
         var paused = LayoutPreferences()
         paused.enabled = false
         manager.preferences = paused

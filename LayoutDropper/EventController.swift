@@ -199,11 +199,7 @@ final class EventController {
             return
         }
 
-        let activeGeneration = generation
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
-            guard let self, self.generation == activeGeneration, self.state == .listening else { return }
-            WindowManager.apply(zone: selectedZone, window: selectedWindow)
-        }
+        WindowManager.apply(zone: selectedZone, window: selectedWindow)
     }
 
     private func prepareLayoutDrag(location: CGPoint) {
@@ -245,6 +241,7 @@ final class EventController {
     }
 
     private func forceResetOverlayState() {
+        WindowManager.cancelPendingApplication()
         overlayManager.hide()
         hasDragged = false
         windowHasMoved = false

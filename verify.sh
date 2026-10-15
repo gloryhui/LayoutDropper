@@ -12,6 +12,9 @@ xcrun swiftc LayoutDropper/SettingsStore.swift LayoutDropper/LayoutZone.swift \
 xcrun swiftc LayoutDropper/SettingsStore.swift LayoutDropper/LayoutZone.swift \
   Tests/SettingsStoreTests.swift -o "$test_dir/settings"
 "$test_dir/settings"
+xcrun swiftc LayoutDropper/SettingsStore.swift LayoutDropper/LayoutZone.swift \
+  LayoutDropper/WindowManager.swift Tests/WindowFrameApplicationTests.swift -o "$test_dir/frame"
+"$test_dir/frame"
 xcrun swiftc LayoutDropper/SettingsStore.swift LayoutDropper/SettingsWindowController.swift \
   LayoutDropper/EventController.swift LayoutDropper/LayoutZone.swift \
   LayoutDropper/OverlayManager.swift LayoutDropper/OverlayWindow.swift \

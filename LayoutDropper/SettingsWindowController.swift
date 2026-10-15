@@ -117,7 +117,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         icon.imageScaling = .scaleProportionallyUpOrDown
         let title = NSTextField(labelWithString: "LayoutDropper")
         title.font = .systemFont(ofSize: 21, weight: .semibold)
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.4"
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.4.1"
         let subtitle = NSTextField(labelWithString: "窗口布局 · \(version)")
         subtitle.textColor = .secondaryLabelColor
         screenInfo.identifier = NSUserInterfaceItemIdentifier("layout.screenInfo")

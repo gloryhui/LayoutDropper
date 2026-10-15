@@ -41,7 +41,8 @@ final class OverlayManager {
         guard let screen = screen(containing: point) else { return nil }
         return LayoutZone.selectedZone(at: point, screenFrame: screen.frame, visibleFrame: screen.visibleFrame,
                                        modifierPressed: modifierPressed, windowMoved: windowMoved,
-                                       dragDistance: dragDistance, preferences: preferences)
+                                       dragDistance: dragDistance, preferences: preferences,
+                                       previousKind: currentScreen == screen ? highlightedKind : nil)
     }
 
     func hide() {

@@ -27,7 +27,7 @@ struct LayoutZone {
 
     static func selectedZone(at point: CGPoint, screenFrame: CGRect, visibleFrame: CGRect,
                              modifierPressed: Bool, windowMoved: Bool, dragDistance: CGFloat,
-                             preferences: LayoutPreferences) -> LayoutZone? {
+                             preferences: LayoutPreferences, previousKind: Kind? = nil) -> LayoutZone? {
         guard preferences.enabled, dragDistance >= CGFloat(preferences.activationDistance),
               contains(point, in: screenFrame) else { return nil }
         let zones = zones(screenFrame: screenFrame, visibleFrame: visibleFrame, preferences: preferences)
@@ -37,6 +37,15 @@ struct LayoutZone {
         }) {
             return edge
         }
+        // Once an edge preview is visible, tolerate a small release jitter without
+        // expanding initial activation or latching a zone after the pointer leaves.
+        if windowMoved, let previousKind, previousKind != .debug1080,
+           let previous = zones.first(where: { $0.kind == previousKind }),
+           contains(point, in: previous.triggerFrame.insetBy(dx: -12, dy: -12)),
+           (preferences.triggerSizes?[previousKind] != nil ||
+            touchesEdge(point, kind: previousKind, screen: screenFrame, inset: 20)) {
+            return previous
+        }
         guard modifierPressed, windowMoved || !preferences.requireWindowMovement else { return nil }
         return zones.first { $0.kind == .debug1080 && contains(point, in: $0.triggerFrame) }
     }
@@ -45,9 +54,8 @@ struct LayoutZone {
         point.x >= rect.minX && point.x <= rect.maxX && point.y >= rect.minY && point.y <= rect.maxY
     }
 
-    private static func touchesEdge(_ point: CGPoint, kind: Kind, screen: CGRect) -> Bool {
+    private static func touchesEdge(_ point: CGPoint, kind: Kind, screen: CGRect, inset: CGFloat = 8) -> Bool {
         // 触发范围决定沿边的位置；只有贴近屏幕边界才算撞边。
-        let inset: CGFloat = 8
         let left = point.x - screen.minX <= inset
         let right = screen.maxX - point.x <= inset
         let top = screen.maxY - point.y <= inset
